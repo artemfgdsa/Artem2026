@@ -1,0 +1,25 @@
+[build]
+  publish = "."
+
+[functions]
+  directory = "functions"
+  node_bundler = "esbuild"
+
+# Скрываем служебные файлы от посторонних
+[[redirects]]
+  from = "/functions/*"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/package.json"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/netlify.toml"
+  to = "/404.html"
+  status = 404
+  force = true
