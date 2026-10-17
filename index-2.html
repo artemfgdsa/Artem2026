@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Анкета</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #f2f4f8; margin: 0; padding: 24px 16px; color: #1f2937; }
+    .card { max-width: 480px; margin: 0 auto; background: #fff; padding: 28px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+    h1 { margin: 0 0 20px; font-size: 24px; }
+    label { display: block; margin: 16px 0 6px; font-weight: 600; font-size: 14px; }
+    input, textarea, select { width: 100%; padding: 10px 12px; font: inherit; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+    textarea { min-height: 110px; resize: vertical; }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+    button { width: 100%; margin-top: 24px; padding: 12px; font: inherit; font-weight: 600; color: #fff; background: #2563eb; border: 0; border-radius: 8px; cursor: pointer; }
+    button:disabled { opacity: .6; }
+    #msg { margin-top: 16px; text-align: center; font-size: 15px; }
+    #msg.ok { color: #15803d; }
+    #msg.bad { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Анкета</h1>
+    <div id="pick">
+      <label for="tpl">Что заполнить</label>
+      <select id="tpl"></select>
+    </div>
+    <div id="fields"></div>
+    <!-- Скрытая «ловушка» для спам-ботов -->
+    <input type="text" id="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;" aria-hidden="true">
+    <button id="send" type="button" disabled>Отправить</button>
+    <div id="msg"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let tpls = [];
+
+    function show(text, ok) { const m = $("msg"); m.textContent = text; m.className = ok ? "ok" : "bad"; }
+
+    function renderFields() {
+      const box = $("fields");
+      box.textContent = "";
+      const t = tpls.find((x) => x.id === $("tpl").value);
+      if (!t) return;
+      t.fields.forEach((f, i) => {
+        const lab = document.createElement("label");
+        lab.textContent = f.label;
+        lab.htmlFor = "f" + i;
+        const el = document.createElement(f.long ? "textarea" : "input");
+        if (!f.long) el.type = f.type === "number" ? "number" : "text";
+        if (f.type === "number") { el.min = 0; el.max = 150; }
+        el.id = "f" + i;
+        el.dataset.key = f.key;
+        box.append(lab, el);
+      });
+    }
+
+    async function init() {
+      try {
+        const res = await fetch("/api/public-templates");
+        tpls = await res.json();
+        const sel = $("tpl");
+        for (const t of tpls) {
+          const o = document.createElement("option");
+          o.value = t.id;
+          o.textContent = t.name;
+          sel.appendChild(o);
+        }
+        $("pick").hidden = tpls.length < 2;
+        $("send").disabled = false;
+        renderFields();
+      } catch (e) {
+        show("Не удалось загрузить анкету. Обновите страницу.", false);
+      }
+    }
+
+    async function send() {
+      show("", true);
+      const values = {};
+      document.querySelectorAll("#fields [data-key]").forEach((el) => { values[el.dataset.key] = el.value; });
+      $("send").disabled = true;
+      try {
+        const res = await fetch("/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ templateId: $("tpl").value, values, website: $("website").value }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return show(data.error || "Ошибка отправки", false);
+        document.querySelectorAll("#fields [data-key]").forEach((el) => { el.value = ""; });
+        show("Спасибо! Анкета отправлена.", true);
+      } catch (e) {
+        show("Нет связи с сервером. Попробуйте ещё раз.", false);
+      } finally {
+        $("send").disabled = false;
+      }
+    }
+
+    $("tpl").onchange = () => { renderFields(); show("", true); };
+    $("send").onclick = send;
+    init();
+  </script>
+</body>
+</html>

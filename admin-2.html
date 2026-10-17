@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Админка — анкеты</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #f2f4f8; margin: 0; padding: 24px 16px; color: #1f2937; }
+    .wrap { max-width: 640px; margin: 0 auto; }
+    .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.08); margin-bottom: 14px; }
+    h1 { margin: 0 0 16px; font-size: 24px; }
+    input { width: 100%; padding: 10px 12px; font: inherit; border: 1px solid #cbd5e1; border-radius: 8px; }
+    button { padding: 10px 14px; font: inherit; font-weight: 600; color: #fff; background: #2563eb; border: 0; border-radius: 8px; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    button.danger { background: #dc2626; }
+    button.danger:hover { background: #b91c1c; }
+    .row { display: flex; gap: 8px; margin-top: 12px; }
+    .title { font-weight: 700; font-size: 17px; }
+    .meta { color: #64748b; font-size: 13px; margin: 4px 0; }
+    .comment { white-space: pre-wrap; font-size: 14px; margin-top: 6px; }
+    #err { color: #b91c1c; margin-top: 10px; font-size: 14px; }
+    #top { display: flex; justify-content: space-between; align-items: center; }
+    #top h1 { margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="login" class="card">
+      <h1>Вход</h1>
+      <input type="password" id="pw" placeholder="Пароль" autocomplete="current-password">
+      <div class="row"><button id="enter">Войти</button></div>
+      <div id="err"></div>
+    </div>
+
+    <div id="panel" hidden>
+      <div id="top" class="card">
+        <h1>Анкеты</h1>
+        <div class="row" style="margin:0">
+          <button id="refresh">Обновить</button>
+          <button id="logout" class="danger">Выйти</button>
+        </div>
+      </div>
+      <div class="card"><a href="/docs.html" style="font-weight:600;color:#2563eb;text-decoration:none">📄 Генератор документов →</a></div>
+      <div id="list"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let password = sessionStorage.getItem("adminPw") || "";
+
+    const headers = () => ({ "x-admin-password": password });
+
+    async function load() {
+      $("err").textContent = "";
+      const res = await fetch("/api/list", { headers: headers() });
+      if (res.status === 401) throw new Error("Неверный пароль");
+      if (!res.ok) throw new Error(await res.text() || "Ошибка сервера");
+      const items = await res.json();
+      render(items);
+      $("login").hidden = true;
+      $("panel").hidden = false;
+    }
+
+    function render(items) {
+      const list = $("list");
+      list.textContent = "";
+      if (!items.length) {
+        const d = document.createElement("div");
+        d.className = "card";
+        d.textContent = "Пока нет анкет.";
+        list.appendChild(d);
+        return;
+      }
+      for (const it of items) {
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const title = document.createElement("div");
+        title.className = "title";
+        title.textContent = it.title;
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = new Date(it.createdAt).toLocaleString("ru-RU") + " · " + it.template;
+
+        const body = document.createElement("div");
+        body.className = "comment";
+        body.textContent = Object.entries(it.values)
+          .filter(([, v]) => v)
+          .map(([k, v]) => k + ": " + v)
+          .join("\n");
+
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const dl = document.createElement("button");
+        dl.textContent = "Скачать DOCX";
+        dl.onclick = () => download(it);
+
+        const del = document.createElement("button");
+        del.className = "danger";
+        del.textContent = "Удалить";
+        del.onclick = () => remove(it);
+
+        row.append(dl, del);
+        card.append(title, meta, body, row);
+        list.appendChild(card);
+      }
+    }
+
+    async function download(it) {
+      const res = await fetch("/api/file?id=" + encodeURIComponent(it.id), { headers: headers() });
+      if (!res.ok) { alert((await res.text()) || "Не удалось создать файл"); return; }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "otzyv-" + it.title.replace(/[\\/:*?"<>|\s]+/g, "_") + ".docx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
+    async function remove(it) {
+      if (!confirm("Удалить анкету «" + it.title + "»?")) return;
+      const res = await fetch("/api/delete?id=" + encodeURIComponent(it.id), { method: "POST", headers: headers() });
+      if (!res.ok) { alert("Не удалось удалить"); return; }
+      load().catch((e) => alert(e.message));
+    }
+
+    async function enter() {
+      password = $("pw").value;
+      try {
+        await load();
+        sessionStorage.setItem("adminPw", password);
+      } catch (e) {
+        $("err").textContent = e.message;
+      }
+    }
+
+    $("enter").onclick = enter;
+    $("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") enter(); });
+    $("refresh").onclick = () => load().catch((e) => alert(e.message));
+    $("logout").onclick = () => { sessionStorage.removeItem("adminPw"); location.reload(); };
+
+    if (password) load().catch(() => { sessionStorage.removeItem("adminPw"); });
+  </script>
+</body>
+</html>
