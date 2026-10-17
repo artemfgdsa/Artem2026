@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Генератор документов</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #f2f4f8; margin: 0; padding: 24px 16px; color: #1f2937; }
+    .wrap { max-width: 640px; margin: 0 auto; }
+    .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.08); margin-bottom: 14px; }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    h2 { margin: 0 0 12px; font-size: 18px; }
+    label { display: block; margin: 14px 0 6px; font-weight: 600; font-size: 14px; }
+    input, textarea, select { width: 100%; padding: 10px 12px; font: inherit; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+    textarea { min-height: 90px; resize: vertical; }
+    button { padding: 11px 14px; font: inherit; font-weight: 600; color: #fff; background: #2563eb; border: 0; border-radius: 8px; cursor: pointer; }
+    button.danger { background: #dc2626; }
+    button.gray { background: #64748b; }
+    .row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    .hint { color: #64748b; font-size: 13px; margin-top: 6px; }
+    #err, #msg { margin-top: 10px; font-size: 14px; }
+    #err { color: #b91c1c; }
+    #msg { color: #15803d; }
+    a { color: #2563eb; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="login" class="card">
+    <h1>Вход</h1>
+    <input type="password" id="pw" placeholder="Пароль" autocomplete="current-password">
+    <div class="row"><button id="enter">Войти</button></div>
+  </div>
+
+  <div id="panel" hidden>
+    <div class="card">
+      <h1>Генератор документов</h1>
+      <a href="/">← Анкеты</a>
+    </div>
+
+    <div class="card">
+      <h2>Создать документ</h2>
+      <label for="tpl">Шаблон</label>
+      <select id="tpl"></select>
+      <div id="fields"></div>
+      <div class="row">
+        <button id="gen">Скачать DOCX</button>
+        <button id="delTpl" class="danger">Удалить шаблон</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Добавить шаблон</h2>
+      <div class="hint">Файл Word (.docx), в котором на месте данных стоят переменные в двойных фигурных скобках, например {{ФИО}}, {{дата}}, {{текст}}.</div>
+      <label for="tname">Название шаблона</label>
+      <input type="text" id="tname" placeholder="Например: Заявление">
+      <label for="tfile">Файл</label>
+      <input type="file" id="tfile" accept=".docx">
+      <div class="row"><button id="upload" class="gray">Загрузить шаблон</button></div>
+    </div>
+
+    <div id="msg"></div>
+  </div>
+  <div id="err"></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let password = sessionStorage.getItem("adminPw") || "";
+  let templates = [];
+  const H = () => ({ "x-admin-password": password });
+
+  const say = (text, bad) => { $("err").textContent = bad ? text : ""; $("msg").textContent = bad ? "" : text; };
+
+  async function loadTemplates(selectId) {
+    const res = await fetch("/api/templates", { headers: H() });
+    if (res.status === 401) throw new Error("Неверный пароль");
+    if (!res.ok) throw new Error((await res.text()) || "Ошибка сервера");
+    templates = await res.json();
+    const sel = $("tpl");
+    sel.textContent = "";
+    for (const t of templates) {
+      const o = document.createElement("option");
+      o.value = t.id;
+      o.textContent = t.name;
+      sel.appendChild(o);
+    }
+    if (selectId) sel.value = selectId;
+    $("login").hidden = true;
+    $("panel").hidden = false;
+    renderFields();
+  }
+
+  const labelOf = (f) => f.replace(/_/g, " ");
+  const isLong = (f) => /текст|коммент|описан|comment|text/i.test(f);
+
+  function renderFields() {
+    const box = $("fields");
+    box.textContent = "";
+    const t = templates.find((x) => x.id === $("tpl").value);
+    $("gen").disabled = $("delTpl").disabled = !t;
+    if (!t) {
+      const d = document.createElement("div");
+      d.className = "hint";
+      d.textContent = "Шаблонов пока нет. Добавьте первый ниже.";
+      box.appendChild(d);
+      return;
+    }
+    t.fields.forEach((f, i) => {
+      const lab = document.createElement("label");
+      lab.textContent = labelOf(f);
+      lab.htmlFor = "f" + i;
+      const el = document.createElement(isLong(f) ? "textarea" : "input");
+      el.id = "f" + i;
+      el.dataset.field = f;
+      box.append(lab, el);
+    });
+  }
+
+  async function generate() {
+    say("");
+    const t = templates.find((x) => x.id === $("tpl").value);
+    if (!t) return;
+    const values = {};
+    document.querySelectorAll("#fields [data-field]").forEach((el) => { values[el.dataset.field] = el.value; });
+    const res = await fetch("/api/doc", {
+      method: "POST",
+      headers: { ...H(), "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id, values }),
+    });
+    if (!res.ok) return say((await res.text()) || "Не удалось создать документ", true);
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = t.name.replace(/[\\/:*?"<>|\s]+/g, "_") + ".docx";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    say("Готово, файл скачан.");
+  }
+
+  async function upload() {
+    say("");
+    const file = $("tfile").files[0];
+    if (!file) return say("Выберите файл .docx", true);
+    const name = $("tname").value.trim() || file.name.replace(/\.docx$/i, "");
+    $("upload").disabled = true;
+    try {
+      const res = await fetch("/api/template-upload", {
+        method: "POST",
+        headers: { ...H(), "x-name": encodeURIComponent(name) },
+        body: await file.arrayBuffer(),
+      });
+      if (!res.ok) return say((await res.text()) || "Не удалось загрузить", true);
+      const t = await res.json();
+      $("tname").value = "";
+      $("tfile").value = "";
+      await loadTemplates(t.id);
+      say("Шаблон добавлен. Поля: " + t.fields.join(", "));
+    } finally {
+      $("upload").disabled = false;
+    }
+  }
+
+  async function removeTpl() {
+    const t = templates.find((x) => x.id === $("tpl").value);
+    if (!t || !confirm("Удалить шаблон «" + t.name + "»?")) return;
+    const res = await fetch("/api/template-delete?id=" + encodeURIComponent(t.id), { method: "POST", headers: H() });
+    if (!res.ok) return say("Не удалось удалить", true);
+    await loadTemplates();
+    say("Шаблон удалён.");
+  }
+
+  async function enter() {
+    password = $("pw").value;
+    try {
+      await loadTemplates();
+      sessionStorage.setItem("adminPw", password);
+    } catch (e) {
+      say(e.message, true);
+    }
+  }
+
+  $("enter").onclick = enter;
+  $("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") enter(); });
+  $("tpl").onchange = renderFields;
+  $("gen").onclick = () => generate().catch((e) => say(e.message, true));
+  $("upload").onclick = () => upload().catch((e) => say(e.message, true));
+  $("delTpl").onclick = () => removeTpl().catch((e) => say(e.message, true));
+
+  if (password) loadTemplates().catch(() => sessionStorage.removeItem("adminPw"));
+</script>
+</body>
+</html>
